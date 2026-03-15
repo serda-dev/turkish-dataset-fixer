@@ -93,19 +93,37 @@ def get_shard_files(cfg, shard_filter: str = None) -> list:
     return all_shards
 
 
-def ensure_kenlm_model_available(cfg):
-    """Fail fast with a precise error if the KenLM model path is invalid."""
+def ensure_kenlm_model_available(cfg, shard_files: list | None = None):
+    """Ensure the KenLM model exists, auto-building it from available shards if needed."""
     if os.path.exists(cfg.kenlm_model_path):
         logging.info("KenLM model: %s", cfg.kenlm_model_path)
         return
+
+    if shard_files:
+        from pipeline.kenlm_builder import build_seed_corpus, train_kenlm_model
+
+        logging.info(
+            "KenLM model not found at %s. Building it from %d discovered input files.",
+            cfg.kenlm_model_path,
+            len(shard_files),
+        )
+        logging.info("Step 1/2: Building KenLM seed corpus...")
+        build_seed_corpus(cfg, shard_files)
+        logging.info("Step 2/2: Training KenLM model...")
+        train_kenlm_model(cfg)
+
+        if os.path.exists(cfg.kenlm_model_path):
+            logging.info("KenLM model built successfully: %s", cfg.kenlm_model_path)
+            return
 
     raise FileNotFoundError(
         "KenLM model not found.\n"
         f"Resolved model path: {cfg.kenlm_model_path}\n"
         f"Resolved output dir: {cfg.output_dir}\n"
         "Relative paths are resolved against the repository root.\n"
-        "Build the model first with `--phase build-kenlm` or pass an explicit "
-        "`--output-dir` / `kenlm_model_path` that contains `kenlm/model.binary`."
+        "Automatic build was not possible. Build the model first with "
+        "`--phase build-kenlm` or pass an explicit `--output-dir` / "
+        "`kenlm_model_path` that contains `kenlm/model.binary`."
     )
 
 
@@ -175,7 +193,7 @@ def phase_filter(cfg, shard_files: list):
 
     # Ensure fastText model
     download_fasttext_model(cfg)
-    ensure_kenlm_model_available(cfg)
+    ensure_kenlm_model_available(cfg, shard_files)
 
     # Initialize deduplicators
     deduplicator = ExactDeduplicator() if cfg.enable_exact_dedup else None
@@ -274,10 +292,6 @@ def phase_remote_filter(cfg):
     logging.info("  PHASE: Remote-Aware Filter Pipeline")
     logging.info("=" * 60)
 
-    # Ensure fastText model
-    download_fasttext_model(cfg)
-    ensure_kenlm_model_available(cfg)
-
     t_start = time.time()
 
     # ── 1. Resolve source ─────────────────────────────────────────────
@@ -298,6 +312,11 @@ def phase_remote_filter(cfg):
         return None
 
     logging.info("Discovered %d dataset files", len(dataset_files))
+
+    # Ensure fastText model and KenLM model after source discovery so we can
+    # build the language model from the actual remote dataset if needed.
+    download_fasttext_model(cfg)
+    ensure_kenlm_model_available(cfg, dataset_files)
 
     # ── 3. Resolve sink ───────────────────────────────────────────────
     sink = resolve_sink(

@@ -22,6 +22,7 @@ import sys
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 # Allow running from project root
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -181,6 +182,41 @@ def test_kenlm_model_check_fails_fast():
         raise AssertionError("Expected FileNotFoundError for missing KenLM model")
 
     print("  ✓ KenLM fail-fast check: PASS")
+
+
+def test_kenlm_model_auto_build_from_shards():
+    """Verify missing KenLM model is built automatically when shard files exist."""
+    from pipeline.main import ensure_kenlm_model_available
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = Path(tmpdir)
+        model_path = tmpdir / 'output' / 'kenlm' / 'model.binary'
+        shard_path = tmpdir / 'input' / 'sample.jsonl'
+        shard_path.parent.mkdir(parents=True, exist_ok=True)
+        shard_path.write_text('{"text":"ornek metin"}\n', encoding='utf-8')
+
+        cfg = SimpleNamespace(
+            kenlm_model_path=str(model_path),
+            output_dir=str(tmpdir / 'output'),
+        )
+
+        def fake_build_seed_corpus(_cfg, _shards):
+            return str(tmpdir / 'output' / 'kenlm' / 'seed_corpus.txt')
+
+        def fake_train_kenlm_model(_cfg):
+            model_path.parent.mkdir(parents=True, exist_ok=True)
+            model_path.write_text('fake-binary', encoding='utf-8')
+            return str(model_path)
+
+        with patch('pipeline.kenlm_builder.build_seed_corpus', side_effect=fake_build_seed_corpus) as build_mock, \
+             patch('pipeline.kenlm_builder.train_kenlm_model', side_effect=fake_train_kenlm_model) as train_mock:
+            ensure_kenlm_model_available(cfg, [shard_path])
+
+        assert model_path.exists()
+        build_mock.assert_called_once()
+        train_mock.assert_called_once()
+
+    print("  ✓ KenLM auto-build from shards: PASS")
 
 
 def test_output_sharder():
@@ -418,6 +454,7 @@ def main():
         test_local_shard_discovery_supports_parquet,
         test_config_resolves_paths_from_repo_root,
         test_kenlm_model_check_fails_fast,
+        test_kenlm_model_auto_build_from_shards,
         test_output_sharder,
         test_manifest,
         test_dedup_integration,
