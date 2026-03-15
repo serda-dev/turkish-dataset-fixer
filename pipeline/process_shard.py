@@ -18,7 +18,7 @@ from pipeline.heuristic_features import compute_features, apply_heuristic_filter
 from pipeline.language_validation import validate_language
 from pipeline.kenlm_scorer import score_text, evaluate_kenlm_quality
 from pipeline.decision_logic import make_decision
-from pipeline.dataset_discovery import iterate_records
+from pipeline.dataset_discovery import dataset_output_stem, iterate_records
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +39,7 @@ def process_shard(
     logger.info("Processing shard: %s", shard_name)
 
     # ── Output paths (always JSONL, even if input is parquet) ─────────
-    out_stem = shard_path.stem
-    # Strip .parquet / .jsonl.gz etc. and always emit .jsonl
-    if out_stem.endswith('.jsonl') or out_stem.endswith('.json'):
-        out_stem = Path(out_stem).stem  # handle double extensions like .jsonl.gz
-    out_name = out_stem + '.jsonl'
+    out_name = dataset_output_stem(shard_path) + '.jsonl'
     filtered_path = cfg.filtered_dir / out_name
     rejected_path = cfg.rejected_dir / out_name
 

@@ -15,13 +15,15 @@ from collections import Counter
 from pathlib import Path
 from typing import Dict, List
 
+from pipeline.dataset_discovery import dataset_output_stem
+
 logger = logging.getLogger(__name__)
 
 
 def save_per_shard_report(stats: Dict, cfg):
     """Save per-shard statistics as JSON report."""
     shard_name = stats.get('shard', 'unknown')
-    report_name = shard_name.replace('.jsonl', '_report.json')
+    report_name = dataset_output_stem(Path(shard_name)) + '_report.json'
     report_path = cfg.per_shard_reports_dir / report_name
 
     # Remove large lists from report (keep summaries only)

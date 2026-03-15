@@ -77,8 +77,10 @@ def download_fasttext_model(cfg):
 
 def get_shard_files(cfg, shard_filter: str = None) -> list:
     """Get list of shard files to process."""
+    from pipeline.dataset_discovery import discover_dataset_files
+
     input_path = Path(cfg.input_dir)
-    all_shards = sorted(input_path.glob('*.jsonl'))
+    all_shards = discover_dataset_files(input_path)
 
     if shard_filter:
         # Support comma-separated names or glob
@@ -239,7 +241,7 @@ def phase_remote_filter(cfg):
       6. Upload to sink if remote
       7. Track progress via manifest for resume
     """
-    from pipeline.dataset_discovery import discover_dataset_files, open_data_file
+    from pipeline.dataset_discovery import iterate_records
     from pipeline.dedup import ExactDeduplicator, NearDeduplicator
     from pipeline.manifest import ProcessingManifest
     from pipeline.output_sharder import OutputSharder
@@ -352,96 +354,89 @@ def phase_remote_filter(cfg):
         )
 
         try:
-            with open_data_file(file_path) as f:
-                for line_num, raw_line in enumerate(f):
-                    pipeline_stats['total_records_read'] += 1
-                    raw_line = raw_line.rstrip('\n')
+            for line_num, record in enumerate(
+                iterate_records(file_path, text_key=cfg.text_key)
+            ):
+                pipeline_stats['total_records_read'] += 1
 
-                    if not raw_line.strip():
-                        continue
+                if record.get('_malformed', False):
+                    pipeline_stats['records_malformed'] += 1
+                    continue
 
-                    # Parse JSON
-                    try:
-                        record = json.loads(raw_line)
-                    except json.JSONDecodeError:
-                        pipeline_stats['records_malformed'] += 1
-                        continue
+                # Extract text
+                text = record.get(cfg.text_key)
+                if text is None:
+                    pipeline_stats['records_missing_text'] += 1
+                    continue
+                if not isinstance(text, str):
+                    text = str(text)
 
-                    # Extract text
-                    text = record.get(cfg.text_key)
-                    if text is None:
-                        pipeline_stats['records_missing_text'] += 1
-                        continue
-                    if not isinstance(text, str):
-                        text = str(text)
+                # Stage 1: Normalize
+                normalized_text = normalize_text(text)
 
-                    # Stage 1: Normalize
-                    normalized_text = normalize_text(text)
+                # Stage 2: Heuristic features
+                features = compute_features(normalized_text)
+                heuristic_reject, heuristic_reasons = apply_heuristic_filters(
+                    normalized_text, features, cfg
+                )
 
-                    # Stage 2: Heuristic features
-                    features = compute_features(normalized_text)
-                    heuristic_reject, heuristic_reasons = apply_heuristic_filters(
-                        normalized_text, features, cfg
+                # Stage 3: Language validation
+                lang_decision, lang_info = validate_language(
+                    normalized_text, features, cfg
+                )
+
+                # Stage 4: KenLM scoring
+                kenlm_result = score_text(normalized_text, cfg)
+                kenlm_reject, kenlm_reason = evaluate_kenlm_quality(
+                    kenlm_result, cfg
+                )
+
+                # Stage 5: Dedup
+                is_exact_dup = False
+                is_near_dup = False
+
+                if deduplicator and cfg.enable_exact_dedup:
+                    is_exact_dup = deduplicator.is_duplicate(normalized_text)
+                    if is_exact_dup:
+                        pipeline_stats['exact_duplicates'] += 1
+
+                if near_deduplicator and cfg.enable_near_dedup and not is_exact_dup:
+                    doc_id = f"{file_path.name}:{line_num}"
+                    is_near_dup = near_deduplicator.is_near_duplicate(
+                        normalized_text, doc_id
                     )
+                    if is_near_dup:
+                        pipeline_stats['near_duplicates'] += 1
 
-                    # Stage 3: Language validation
-                    lang_decision, lang_info = validate_language(
-                        normalized_text, features, cfg
-                    )
+                # Stage 6: Decision
+                decision_result = make_decision(
+                    text=normalized_text,
+                    features=features,
+                    heuristic_reject=heuristic_reject,
+                    heuristic_reasons=heuristic_reasons,
+                    lang_decision=lang_decision,
+                    lang_info=lang_info,
+                    kenlm_result=kenlm_result,
+                    kenlm_reject=(
+                        kenlm_reject if kenlm_reject is not None else False
+                    ),
+                    kenlm_reason=kenlm_reason,
+                    is_exact_dup=is_exact_dup,
+                    is_near_dup=is_near_dup,
+                    cfg=cfg,
+                )
 
-                    # Stage 4: KenLM scoring
-                    kenlm_result = score_text(normalized_text, cfg)
-                    kenlm_reject, kenlm_reason = evaluate_kenlm_quality(
-                        kenlm_result, cfg
-                    )
-
-                    # Stage 5: Dedup
-                    is_exact_dup = False
-                    is_near_dup = False
-
-                    if deduplicator and cfg.enable_exact_dedup:
-                        is_exact_dup = deduplicator.is_duplicate(normalized_text)
-                        if is_exact_dup:
-                            pipeline_stats['exact_duplicates'] += 1
-
-                    if (near_deduplicator and cfg.enable_near_dedup
-                            and not is_exact_dup):
-                        doc_id = f"{file_path.name}:{line_num}"
-                        is_near_dup = near_deduplicator.is_near_duplicate(
-                            normalized_text, doc_id
+                if decision_result['decision'] == 'keep':
+                    pipeline_stats['records_kept'] += 1
+                    out_record = dict(record)
+                    out_record[cfg.text_key] = normalized_text
+                    sharder.write_record(out_record, text_key=cfg.text_key)
+                else:
+                    pipeline_stats['records_rejected'] += 1
+                    for reason in decision_result.get('reasons', []):
+                        pipeline_stats['rejection_reasons'][reason] = (
+                            pipeline_stats['rejection_reasons'].get(reason, 0) + 1
                         )
-                        if is_near_dup:
-                            pipeline_stats['near_duplicates'] += 1
-
-                    # Stage 6: Decision
-                    decision_result = make_decision(
-                        text=normalized_text,
-                        features=features,
-                        heuristic_reject=heuristic_reject,
-                        heuristic_reasons=heuristic_reasons,
-                        lang_decision=lang_decision,
-                        lang_info=lang_info,
-                        kenlm_result=kenlm_result,
-                        kenlm_reject=(
-                            kenlm_reject if kenlm_reject is not None else False
-                        ),
-                        kenlm_reason=kenlm_reason,
-                        is_exact_dup=is_exact_dup,
-                        is_near_dup=is_near_dup,
-                        cfg=cfg,
-                    )
-
-                    if decision_result['decision'] == 'keep':
-                        pipeline_stats['records_kept'] += 1
-                        out_record = dict(record)
-                        out_record[cfg.text_key] = normalized_text
-                        sharder.write_record(out_record, text_key=cfg.text_key)
-                    else:
-                        pipeline_stats['records_rejected'] += 1
-                        for reason in decision_result.get('reasons', []):
-                            pipeline_stats['rejection_reasons'][reason] = (
-                                pipeline_stats['rejection_reasons'].get(reason, 0) + 1
-                            )
 
             # Mark file as processed
             pipeline_stats['files_processed'] += 1
@@ -595,7 +590,7 @@ Examples:
     )
 
     parser.add_argument('--input-dir', default='input',
-                       help='Input directory with JSONL shards (default: input)')
+                       help='Input directory with .json/.jsonl/.json.gz/.jsonl.gz/.parquet files (default: input)')
     parser.add_argument('--output-dir', default='output',
                        help='Output directory (default: output)')
     parser.add_argument('--phase', default='all',
@@ -700,12 +695,12 @@ Examples:
         shard_files = get_shard_files(cfg, args.shards)
         logging.info("Shards: %d files", len(shard_files))
 
-        if not shard_files:
-            logging.error("No shard files found!")
-            sys.exit(1)
-
         if args.phase in ('all', 'inspect'):
             phase_inspect(cfg)
+
+        if args.phase in ('all', 'build-kenlm', 'filter') and not shard_files:
+            logging.error("No supported input files found!")
+            sys.exit(1)
 
         if args.phase in ('all', 'build-kenlm'):
             phase_build_kenlm(cfg, shard_files)

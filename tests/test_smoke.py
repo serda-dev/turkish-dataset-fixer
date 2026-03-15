@@ -3,7 +3,7 @@ test_smoke.py — Smoke tests for the dataset-fixer pipeline.
 
 Tests core components of the remote source/sink pipeline:
   - Source type detection
-  - Dataset file discovery (including .gz)
+  - Dataset file discovery (including .gz and .parquet)
   - Output sharder (configurable shard size)
   - Manifest (load/save/resume)
   - Dedup integration (exact duplicate removal)
@@ -21,9 +21,17 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 # Allow running from project root
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+try:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+except ImportError:
+    pa = None
+    pq = None
 
 
 def test_source_type_detection():
@@ -47,8 +55,12 @@ def test_source_type_detection():
 
 
 def test_dataset_discovery():
-    """Verify recursive file discovery with gz support."""
-    from pipeline.dataset_discovery import discover_dataset_files, open_data_file
+    """Verify recursive file discovery with gz and parquet support."""
+    from pipeline.dataset_discovery import (
+        discover_dataset_files,
+        iterate_records,
+        open_data_file,
+    )
 
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
@@ -68,6 +80,14 @@ def test_dataset_discovery():
         with gzip.open(gz_path, 'wt', encoding='utf-8') as f:
             f.write('{"text": "compressed"}\n')
 
+        parquet_path = root / 'sub1' / 'dataset.parquet'
+        if pa is not None and pq is not None:
+            table = pa.Table.from_pylist([
+                {'text': 'parquet row 1', 'source': 'test'},
+                {'text': 'parquet row 2', 'source': 'test'},
+            ])
+            pq.write_table(table, parquet_path)
+
         # Discover
         files = discover_dataset_files(root)
         names = {f.name for f in files}
@@ -76,8 +96,11 @@ def test_dataset_discovery():
         assert 'data.json' in names
         assert 'nested.jsonl' in names
         assert 'compressed.jsonl.gz' in names
+        if pa is not None and pq is not None:
+            assert 'dataset.parquet' in names
         assert 'ignore.txt' not in names
-        assert len(files) == 4
+        expected_count = 5 if pa is not None and pq is not None else 4
+        assert len(files) == expected_count
 
         # Test transparent gz reading
         with open_data_file(gz_path) as f:
@@ -91,7 +114,33 @@ def test_dataset_discovery():
             rec = json.loads(line)
             assert rec['text'] == 'hello'
 
+        if pa is not None and pq is not None:
+            parquet_records = list(iterate_records(parquet_path))
+            assert len(parquet_records) == 2
+            assert parquet_records[0]['text'] == 'parquet row 1'
+
     print("  ✓ Dataset discovery: PASS")
+
+
+def test_local_shard_discovery_supports_parquet():
+    """Verify local pipeline shard discovery picks up parquet inputs."""
+    from pipeline.main import get_shard_files
+
+    if pa is None or pq is None:
+        print("  - Skipping parquet shard discovery check (pyarrow not installed)")
+        return
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        pq.write_table(pa.Table.from_pylist([{'text': 'hello parquet'}]), root / 'sample.parquet')
+
+        cfg = SimpleNamespace(input_dir=str(root))
+        files = get_shard_files(cfg)
+
+        assert len(files) == 1
+        assert files[0].name == 'sample.parquet'
+
+    print("  ✓ Local parquet shard discovery: PASS")
 
 
 def test_output_sharder():
@@ -326,6 +375,7 @@ def main():
     tests = [
         test_source_type_detection,
         test_dataset_discovery,
+        test_local_shard_discovery_supports_parquet,
         test_output_sharder,
         test_manifest,
         test_dedup_integration,

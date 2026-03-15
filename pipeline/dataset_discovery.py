@@ -37,6 +37,23 @@ def is_parquet_file(path: Path) -> bool:
     return path.suffix.lower() == '.parquet'
 
 
+def dataset_output_stem(path: Path) -> str:
+    """
+    Normalize a supported dataset filename to a stable output stem.
+
+    Examples:
+      - sample.jsonl -> sample
+      - sample.jsonl.gz -> sample
+      - sample.parquet -> sample
+    """
+    path = Path(path)
+    name = path.name
+    for suffix in sorted(SUPPORTED_EXTENSIONS, key=len, reverse=True):
+        if name.lower().endswith(suffix):
+            return name[:-len(suffix)]
+    return path.stem
+
+
 def is_supported_file(path: Path) -> bool:
     """Check if a file has a supported extension."""
     double = _get_double_suffix(path)

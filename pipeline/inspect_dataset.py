@@ -5,14 +5,12 @@ Scans shards, samples records, reports field distributions,
 length statistics, and edge cases before processing.
 """
 
-import json
 import logging
-import os
 from collections import Counter
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict
 
-from pipeline.dataset_discovery import iterate_records, SUPPORTED_EXTENSIONS
+from pipeline.dataset_discovery import discover_dataset_files, iterate_records
 
 logger = logging.getLogger(__name__)
 
@@ -26,13 +24,10 @@ def inspect_dataset(input_dir: str, sample_per_shard: int = 100) -> Dict:
     Returns dict with inspection results.
     """
     input_path = Path(input_dir)
-    shard_files = sorted(
-        p for p in input_path.iterdir()
-        if p.is_file() and p.suffix.lower() in ('.jsonl', '.json', '.parquet')
-    )
+    shard_files = discover_dataset_files(input_path)
 
     if not shard_files:
-        logger.error("No supported data files (.jsonl/.json/.parquet) found in %s", input_dir)
+        logger.error("No supported data files found in %s", input_dir)
         return {'error': 'no_files'}
 
     logger.info("Found %d shard files in %s", len(shard_files), input_dir)

@@ -1,6 +1,6 @@
 # Turkish Dataset Quality Filtering Pipeline
 
-A modular, Turkish-aware pipeline for filtering large JSONL datasets using KenLM language model scoring, fastText language detection, heuristic filtering, and deduplication.
+A modular, Turkish-aware pipeline for filtering large JSON, JSONL, and Parquet datasets using KenLM language model scoring, fastText language detection, heuristic filtering, and deduplication.
 
 Supports both **local** and **remote** (Hugging Face / GitHub) input sources and output sinks. Designed for long-running VPS processes with manifest-based resume support.
 
@@ -13,7 +13,7 @@ pip install -r requirements.txt
 # 2. Run full pipeline (inspect → build KenLM → filter → report)
 python -m pipeline.main --input-dir input --output-dir output --phase all
 
-# 3. Smoke test on 1 shard
+# 3. Smoke test on 1 shard/file
 python -m pipeline.main --phase all --shards "shard-00000.jsonl" --seed-shards 1
 ```
 
@@ -31,7 +31,7 @@ python -m pipeline.main --phase all --shards "shard-00000.jsonl" --seed-shards 1
 ### Core Options
 
 ```
---input-dir DIR       Input JSONL shard directory (default: input)
+--input-dir DIR       Input directory with .json/.jsonl/.json.gz/.jsonl.gz/.parquet files
 --output-dir DIR      Output directory (default: output)
 --phase PHASE         Pipeline phase: inspect|build-kenlm|filter|all
 --shards FILTER       Comma-separated shard names or substring
@@ -132,7 +132,7 @@ output/
 ## Remote Pipeline Features
 
 - **Source auto-detection**: Automatically detects if input is a local path, HF repo, or GitHub URL
-- **Recursive discovery**: Finds `.json`, `.jsonl`, `.json.gz`, `.jsonl.gz` files in nested directories
+- **Recursive discovery**: Finds `.json`, `.jsonl`, `.json.gz`, `.jsonl.gz`, and `.parquet` files in nested directories
 - **Configurable sharding**: Output shards target a configurable size (default: 55 MB)
 - **Incremental upload**: Each shard is uploaded to HF as soon as it's produced
 - **Manifest-based resume**: If interrupted, re-running skips already-processed files and uploaded shards
@@ -157,6 +157,7 @@ This uses `huggingface_hub.upload_large_folder()` plus `HF_XET_HIGH_PERFORMANCE=
 - KenLM C++ tools (`lmplz`, `build_binary`) — build from [github.com/kpu/kenlm](https://github.com/kpu/kenlm)
 - `kenlm` Python bindings (pip install, may need Cython regen for Python 3.13+)
 - `fasttext` — language ID via `lid.176.bin` (auto-downloaded)
+- `pyarrow` — required for streaming `.parquet` input
 - `xxhash`, `datasketch`, `langdetect`
 - `huggingface_hub` — for remote source/sink
 

@@ -6,6 +6,7 @@ fasttext>=0.9.3     # pip install fasttext (for language ID with lid.176.bin)
 
 # Language detection fallback
 langdetect>=1.0.9
+pyarrow>=14.0.0      # Required for .parquet dataset input support
 
 # Hashing and dedup
 xxhash>=3.0.0       # Fast hashing for exact deduplication
