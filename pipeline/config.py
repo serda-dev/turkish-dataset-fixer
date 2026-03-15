@@ -10,6 +10,17 @@ from pathlib import Path
 from dataclasses import dataclass, field
 
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _resolve_repo_path(path_str: str) -> str:
+    """Resolve relative paths against the repository root, not process cwd."""
+    path = Path(path_str).expanduser()
+    if path.is_absolute():
+        return str(path.resolve())
+    return str((PROJECT_ROOT / path).resolve())
+
+
 @dataclass
 class PipelineConfig:
     """All configurable parameters for the pipeline."""
@@ -138,16 +149,30 @@ class PipelineConfig:
 
     def __post_init__(self):
         """Set derived paths and resolve tokens from env."""
+        self.input_dir = _resolve_repo_path(self.input_dir)
+        self.output_dir = _resolve_repo_path(self.output_dir)
+        self.cache_dir = _resolve_repo_path(self.cache_dir)
+
         if not self.kenlm_model_path:
             self.kenlm_model_path = str(Path(self.output_dir) / "kenlm" / "model.binary")
+        else:
+            self.kenlm_model_path = _resolve_repo_path(self.kenlm_model_path)
         if not self.kenlm_arpa_path:
             self.kenlm_arpa_path = str(Path(self.output_dir) / "kenlm" / "model.arpa")
+        else:
+            self.kenlm_arpa_path = _resolve_repo_path(self.kenlm_arpa_path)
         if not self.kenlm_seed_corpus_path:
             self.kenlm_seed_corpus_path = str(Path(self.output_dir) / "kenlm" / "seed_corpus.txt")
+        else:
+            self.kenlm_seed_corpus_path = _resolve_repo_path(self.kenlm_seed_corpus_path)
         if not self.fasttext_model_path:
             self.fasttext_model_path = str(Path(self.output_dir) / "kenlm" / "lid.176.bin")
+        else:
+            self.fasttext_model_path = _resolve_repo_path(self.fasttext_model_path)
         if not self.kenlm_binary_path:
             self.kenlm_binary_path = "/tmp/kenlm_build/build/bin"
+        else:
+            self.kenlm_binary_path = _resolve_repo_path(self.kenlm_binary_path)
 
         # Resolve tokens from environment if not explicitly set
         if not self.hf_token:

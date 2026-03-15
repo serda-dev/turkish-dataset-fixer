@@ -43,6 +43,8 @@ python -m pipeline.main --phase all --shards "shard-00000.jsonl" --seed-shards 1
 --near-dedup          Enable MinHash near-deduplication
 ```
 
+Relative paths such as `input`, `output`, and `.cache` are resolved from the repository root, which keeps VPS/systemd runs stable even if the process starts from a different working directory.
+
 ### Remote Source / Sink Options
 
 ```

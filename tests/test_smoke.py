@@ -143,6 +143,46 @@ def test_local_shard_discovery_supports_parquet():
     print("  ✓ Local parquet shard discovery: PASS")
 
 
+def test_config_resolves_paths_from_repo_root():
+    """Verify default relative paths resolve from repo root, not process cwd."""
+    from pipeline.config import PROJECT_ROOT, PipelineConfig
+
+    original_cwd = Path.cwd()
+    try:
+        os.chdir('/tmp')
+        cfg = PipelineConfig()
+    finally:
+        os.chdir(original_cwd)
+
+    assert cfg.output_dir == str((PROJECT_ROOT / 'output').resolve())
+    assert cfg.kenlm_model_path == str(
+        (PROJECT_ROOT / 'output' / 'kenlm' / 'model.binary').resolve()
+    )
+
+    print("  ✓ Repo-root path resolution: PASS")
+
+
+def test_kenlm_model_check_fails_fast():
+    """Verify filtering fails fast with a precise path error if model is missing."""
+    from pipeline.main import ensure_kenlm_model_available
+
+    cfg = SimpleNamespace(
+        kenlm_model_path='/tmp/does-not-exist/model.binary',
+        output_dir='/tmp/does-not-exist',
+    )
+
+    try:
+        ensure_kenlm_model_available(cfg)
+    except FileNotFoundError as exc:
+        message = str(exc)
+        assert 'Resolved model path' in message
+        assert '/tmp/does-not-exist/model.binary' in message
+    else:
+        raise AssertionError("Expected FileNotFoundError for missing KenLM model")
+
+    print("  ✓ KenLM fail-fast check: PASS")
+
+
 def test_output_sharder():
     """Verify shard writer produces shards near target size."""
     from pipeline.output_sharder import OutputSharder
@@ -376,6 +416,8 @@ def main():
         test_source_type_detection,
         test_dataset_discovery,
         test_local_shard_discovery_supports_parquet,
+        test_config_resolves_paths_from_repo_root,
+        test_kenlm_model_check_fails_fast,
         test_output_sharder,
         test_manifest,
         test_dedup_integration,

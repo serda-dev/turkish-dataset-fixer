@@ -93,6 +93,22 @@ def get_shard_files(cfg, shard_filter: str = None) -> list:
     return all_shards
 
 
+def ensure_kenlm_model_available(cfg):
+    """Fail fast with a precise error if the KenLM model path is invalid."""
+    if os.path.exists(cfg.kenlm_model_path):
+        logging.info("KenLM model: %s", cfg.kenlm_model_path)
+        return
+
+    raise FileNotFoundError(
+        "KenLM model not found.\n"
+        f"Resolved model path: {cfg.kenlm_model_path}\n"
+        f"Resolved output dir: {cfg.output_dir}\n"
+        "Relative paths are resolved against the repository root.\n"
+        "Build the model first with `--phase build-kenlm` or pass an explicit "
+        "`--output-dir` / `kenlm_model_path` that contains `kenlm/model.binary`."
+    )
+
+
 def phase_inspect(cfg):
     """Run dataset inspection."""
     from pipeline.inspect_dataset import inspect_dataset
@@ -159,6 +175,7 @@ def phase_filter(cfg, shard_files: list):
 
     # Ensure fastText model
     download_fasttext_model(cfg)
+    ensure_kenlm_model_available(cfg)
 
     # Initialize deduplicators
     deduplicator = ExactDeduplicator() if cfg.enable_exact_dedup else None
@@ -259,6 +276,7 @@ def phase_remote_filter(cfg):
 
     # Ensure fastText model
     download_fasttext_model(cfg)
+    ensure_kenlm_model_available(cfg)
 
     t_start = time.time()
 
@@ -663,7 +681,7 @@ Examples:
     cfg.ensure_dirs()
 
     # Setup logging
-    setup_logging(args.output_dir)
+    setup_logging(cfg.output_dir)
 
     logging.info("=" * 60)
     logging.info("  TURKISH DATASET QUALITY FILTERING PIPELINE")
