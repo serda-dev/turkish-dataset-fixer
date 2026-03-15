@@ -16,6 +16,7 @@ import logging
 import os
 import random
 import subprocess
+import time
 from pathlib import Path
 from typing import List
 
@@ -25,6 +26,9 @@ from pipeline.language_validation import validate_language
 from pipeline.dataset_discovery import iterate_records
 
 logger = logging.getLogger(__name__)
+
+_SEED_PROGRESS_EVERY_RECORDS = 5000
+_SEED_PROGRESS_EVERY_SECONDS = 15.0
 
 
 def _tokenize_for_lm(text: str) -> str:
@@ -71,49 +75,76 @@ def build_seed_corpus(cfg, shard_files: List[Path]) -> str:
     total_records = 0
     accepted_records = 0
     total_sentences = 0
+    last_progress_log = time.time()
 
     with open(seed_path, 'w', encoding='utf-8') as out_f:
-        for shard_path in sample_shards:
+        for shard_index, shard_path in enumerate(sample_shards, start=1):
+            shard_records_before = total_records
+            shard_accepted_before = accepted_records
             logger.info("Processing shard for seed corpus: %s", shard_path.name)
             for record in iterate_records(shard_path, text_key=cfg.text_key):
-                    if accepted_records >= cfg.seed_corpus_max_records:
-                        break
+                if accepted_records >= cfg.seed_corpus_max_records:
+                    break
 
-                    total_records += 1
+                total_records += 1
 
-                    # Skip malformed records
-                    if record.get('_malformed', False):
-                        continue
+                if (
+                    total_records % _SEED_PROGRESS_EVERY_RECORDS == 0
+                    or time.time() - last_progress_log >= _SEED_PROGRESS_EVERY_SECONDS
+                ):
+                    logger.info(
+                        "Seed corpus progress: shard %d/%d (%s) | scanned=%d accepted=%d sentences=%d",
+                        shard_index,
+                        len(sample_shards),
+                        shard_path.name,
+                        total_records,
+                        accepted_records,
+                        total_sentences,
+                    )
+                    last_progress_log = time.time()
 
-                    text = record.get(cfg.text_key, '')
-                    if not isinstance(text, str) or not text.strip():
-                        continue
+                # Skip malformed records
+                if record.get('_malformed', False):
+                    continue
 
-                    # Normalize
-                    text = normalize_text(text)
-                    if not text:
-                        continue
+                text = record.get(cfg.text_key, '')
+                if not isinstance(text, str) or not text.strip():
+                    continue
 
-                    # Fast heuristic check
-                    features = compute_features(text)
-                    heuristic_reject, _ = apply_heuristic_filters(text, features, cfg)
-                    if heuristic_reject:
-                        continue
+                # Normalize
+                text = normalize_text(text)
+                if not text:
+                    continue
 
-                    # Language check
-                    lang_decision, _ = validate_language(text, features, cfg)
-                    if lang_decision == 'reject':
-                        continue
+                # Fast heuristic check
+                features = compute_features(text)
+                heuristic_reject, _ = apply_heuristic_filters(text, features, cfg)
+                if heuristic_reject:
+                    continue
 
-                    # Convert to LM training format
-                    lm_text = _tokenize_for_lm(text)
-                    if lm_text.strip():
-                        out_f.write(lm_text + '\n')
-                        accepted_records += 1
-                        total_sentences += lm_text.count('\n') + 1
+                # Language check
+                lang_decision, _ = validate_language(text, features, cfg)
+                if lang_decision == 'reject':
+                    continue
+
+                # Convert to LM training format
+                lm_text = _tokenize_for_lm(text)
+                if lm_text.strip():
+                    out_f.write(lm_text + '\n')
+                    accepted_records += 1
+                    total_sentences += lm_text.count('\n') + 1
 
             if accepted_records >= cfg.seed_corpus_max_records:
                 break
+
+            logger.info(
+                "Seed corpus shard done: %s | shard_scanned=%d shard_accepted=%d total_scanned=%d total_accepted=%d",
+                shard_path.name,
+                total_records - shard_records_before,
+                accepted_records - shard_accepted_before,
+                total_records,
+                accepted_records,
+            )
 
     corpus_size_mb = os.path.getsize(seed_path) / (1024 * 1024)
     logger.info("Seed corpus: %d accepted from %d total records, "
