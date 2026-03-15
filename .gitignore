@@ -1,0 +1,55 @@
+# ── Python ────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ── Virtual environments ──────────────────────────────────────────────
+venv/
+.venv/
+env/
+.env
+
+# ── IDE / Editor ──────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ── Pipeline input / output (large dataset files) ────────────────────
+input/
+output/
+.cache/
+
+# ── Tokenizer large model files ──────────────────────────────────────
+tokinizer-normalizer/*.json
+!tokinizer-normalizer/*config*.json
+tokinizer-normalizer/hf_tokenizer_50000/
+tokinizer-normalizer/jamba_samba_extended/
+tokinizer-normalizer/SambaLingo/
+
+# ── KenLM build artifacts ────────────────────────────────────────────
+*.binary
+*.arpa
+
+# ── FastText model ────────────────────────────────────────────────────
+lid.176.bin
+
+# ── Manifest / temp ──────────────────────────────────────────────────
+manifest.json
+*.tmp
+.tmp_shards/
+.tmp_split/
+
+# ── Logs ──────────────────────────────────────────────────────────────
+*.log
+
+# ── Secrets ───────────────────────────────────────────────────────────
+.env
+*.env

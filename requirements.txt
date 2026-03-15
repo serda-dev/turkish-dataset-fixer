@@ -1,0 +1,20 @@
+# Turkish Dataset Quality Filtering Pipeline — Dependencies
+
+# Core NLP / scoring
+kenlm>=0.2.0        # Built from source: https://github.com/kpu/kenlm
+fasttext>=0.9.3     # pip install fasttext (for language ID with lid.176.bin)
+
+# Language detection fallback
+langdetect>=1.0.9
+
+# Hashing and dedup
+xxhash>=3.0.0       # Fast hashing for exact deduplication
+datasketch>=1.5.0   # MinHash LSH for optional near-deduplication
+
+# Hugging Face upload
+huggingface_hub>=1.7.0
+hf_xet>=1.2.0
+
+# Build tools (install via pip if system cmake unavailable)
+# cmake>=3.20       # Needed to build KenLM from source
+# cython>=3.0       # Needed to regenerate KenLM Python bindings for Python 3.13+
