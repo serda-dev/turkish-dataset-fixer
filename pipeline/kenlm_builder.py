@@ -22,6 +22,7 @@ from typing import List
 from pipeline.text_normalization import normalize_text
 from pipeline.heuristic_features import compute_features, apply_heuristic_filters
 from pipeline.language_validation import validate_language
+from pipeline.dataset_discovery import iterate_records
 
 logger = logging.getLogger(__name__)
 
@@ -74,22 +75,17 @@ def build_seed_corpus(cfg, shard_files: List[Path]) -> str:
     with open(seed_path, 'w', encoding='utf-8') as out_f:
         for shard_path in sample_shards:
             logger.info("Processing shard for seed corpus: %s", shard_path.name)
-            with open(shard_path, 'r', encoding='utf-8', errors='replace') as f:
-                for line in f:
+            for record in iterate_records(shard_path, text_key=cfg.text_key):
                     if accepted_records >= cfg.seed_corpus_max_records:
                         break
 
                     total_records += 1
-                    line = line.strip()
-                    if not line:
+
+                    # Skip malformed records
+                    if record.get('_malformed', False):
                         continue
 
-                    try:
-                        rec = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-
-                    text = rec.get(cfg.text_key, '')
+                    text = record.get(cfg.text_key, '')
                     if not isinstance(text, str) or not text.strip():
                         continue
 

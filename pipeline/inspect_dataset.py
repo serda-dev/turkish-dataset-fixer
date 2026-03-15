@@ -12,6 +12,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Dict, List
 
+from pipeline.dataset_discovery import iterate_records, SUPPORTED_EXTENSIONS
+
 logger = logging.getLogger(__name__)
 
 TURKISH_SPECIFIC_CHARS = set('çÇğĞıİöÖşŞüÜ')
@@ -24,10 +26,13 @@ def inspect_dataset(input_dir: str, sample_per_shard: int = 100) -> Dict:
     Returns dict with inspection results.
     """
     input_path = Path(input_dir)
-    shard_files = sorted(input_path.glob('*.jsonl'))
+    shard_files = sorted(
+        p for p in input_path.iterdir()
+        if p.is_file() and p.suffix.lower() in ('.jsonl', '.json', '.parquet')
+    )
 
     if not shard_files:
-        logger.error("No .jsonl files found in %s", input_dir)
+        logger.error("No supported data files (.jsonl/.json/.parquet) found in %s", input_dir)
         return {'error': 'no_files'}
 
     logger.info("Found %d shard files in %s", len(shard_files), input_dir)
@@ -49,27 +54,22 @@ def inspect_dataset(input_dir: str, sample_per_shard: int = 100) -> Dict:
         size = shard.stat().st_size
         total_size_bytes += size
 
-        # Count lines and sample
-        line_count = 0
-        with open(shard, 'r', encoding='utf-8', errors='replace') as f:
-            for i, line in enumerate(f):
-                line_count += 1
-                if i >= sample_per_shard:
-                    continue  # still count lines
+        # Count records and sample
+        record_count = 0
+        try:
+            for rec in iterate_records(shard, text_key='text'):
+                record_count += 1
+                if record_count > sample_per_shard:
+                    continue  # still count total
 
-                line = line.strip()
-                if not line:
-                    continue
-
-                try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError:
+                if rec.get('_malformed', False):
                     malformed_lines += 1
                     continue
 
                 total_records_sampled += 1
                 for key in rec.keys():
-                    field_counter[key] += 1
+                    if not key.startswith('_'):
+                        field_counter[key] += 1
 
                 text = rec.get('text', '')
                 if isinstance(text, str):
@@ -88,11 +88,14 @@ def inspect_dataset(input_dir: str, sample_per_shard: int = 100) -> Dict:
 
                     if len(sample_texts) < 5:
                         sample_texts.append(text[:300])
+        except Exception as e:
+            logger.warning("Error reading %s: %s", shard.name, e)
 
         file_info.append({
             'name': shard.name,
             'size_mb': round(size / (1024 * 1024), 2),
-            'line_count': line_count,
+            'format': shard.suffix.lower().lstrip('.'),
+            'record_count': record_count,
         })
 
     avg_len = length_stats['total'] // max(1, length_stats['count'])

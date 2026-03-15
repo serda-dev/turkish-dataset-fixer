@@ -1,8 +1,8 @@
 """
 process_shard.py — Per-shard processing orchestrator.
 
-Streams JSONL line by line, applies all pipeline stages,
-writes to filtered/rejected output files,
+Streams records from JSONL or Parquet files, applies all pipeline stages,
+writes to filtered/rejected output files (always JSONL),
 and collects statistics and audit samples.
 """
 
@@ -18,6 +18,7 @@ from pipeline.heuristic_features import compute_features, apply_heuristic_filter
 from pipeline.language_validation import validate_language
 from pipeline.kenlm_scorer import score_text, evaluate_kenlm_quality
 from pipeline.decision_logic import make_decision
+from pipeline.dataset_discovery import iterate_records
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +38,14 @@ def process_shard(
     shard_name = shard_path.name
     logger.info("Processing shard: %s", shard_name)
 
-    # ── Output paths ──────────────────────────────────────────────────
-    filtered_path = cfg.filtered_dir / shard_name
-    rejected_path = cfg.rejected_dir / shard_name
+    # ── Output paths (always JSONL, even if input is parquet) ─────────
+    out_stem = shard_path.stem
+    # Strip .parquet / .jsonl.gz etc. and always emit .jsonl
+    if out_stem.endswith('.jsonl') or out_stem.endswith('.json'):
+        out_stem = Path(out_stem).stem  # handle double extensions like .jsonl.gz
+    out_name = out_stem + '.jsonl'
+    filtered_path = cfg.filtered_dir / out_name
+    rejected_path = cfg.rejected_dir / out_name
 
     # ── Statistics ────────────────────────────────────────────────────
     stats = {
@@ -64,28 +70,20 @@ def process_shard(
     borderline_samples = []
     max_audit_samples = cfg.audit_sample_size // 2  # per shard contribution
 
-    # ── Process line by line ──────────────────────────────────────────
-    with open(shard_path, 'r', encoding='utf-8', errors='replace') as in_f, \
-         open(filtered_path, 'w', encoding='utf-8') as out_f, \
+    # ── Process records (format-agnostic) ──────────────────────────────
+    with open(filtered_path, 'w', encoding='utf-8') as out_f, \
          open(rejected_path, 'w', encoding='utf-8') as rej_f:
 
-        for line_num, raw_line in enumerate(in_f):
+        for line_num, record in enumerate(iterate_records(
+                shard_path, text_key=cfg.text_key)):
             stats['total_lines'] += 1
-            raw_line = raw_line.rstrip('\n')
 
-            # Skip empty lines
-            if not raw_line.strip():
-                continue
-
-            # ── Parse JSON (graceful) ─────────────────────────────────
-            try:
-                record = json.loads(raw_line)
-            except json.JSONDecodeError:
+            # ── Handle malformed records ──────────────────────────────
+            if record.get('_malformed', False):
                 stats['malformed_lines'] += 1
-                # Write malformed line to rejected with reason
                 try:
                     rej_f.write(json.dumps({
-                        'text': raw_line[:500],
+                        'text': record.get('_raw', '')[:500],
                         '_rejection_reasons': ['malformed_json'],
                         '_line_num': line_num,
                     }, ensure_ascii=False) + '\n')
